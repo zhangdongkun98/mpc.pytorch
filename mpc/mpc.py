@@ -7,13 +7,14 @@ import numpy as np
 import numpy.random as npr
 
 from collections import namedtuple
-
+import time
 from enum import Enum
 
 import sys
 
 from . import util
 from .pnqp import pnqp
+from . import lqr_step
 from .lqr_step import LQRStep
 from .dynamics import CtrlPassthroughDynamics
 
@@ -182,6 +183,8 @@ class MPC(Module):
 
     # @profile
     def forward(self, x_init, cost, dx):
+        tick1 = time.time()
+
         # QuadCost.C: [T, n_batch, n_tau, n_tau]
         # QuadCost.c: [T, n_batch, n_tau]
         assert isinstance(cost, QuadCost) or \
@@ -335,12 +338,16 @@ class MPC(Module):
                 u = u*Iu + u.clone().detach()*(1.-Iu)
 
         costs = best['costs']
+        
+        tick2 = time.time()
+        print('forward time: ', tick2 - tick1)
+
         return (x, u, costs)
 
     def solve_lqr_subproblem(self, x_init, C, c, F, f, cost, dynamics, x, u,
                              no_op_forward=False):
         if self.slew_rate_penalty is None or isinstance(cost, Module):
-            _lqr = LQRStep(
+            _lqr = lqr_step.LQRStepUtil(
                 n_state=self.n_state,
                 n_ctrl=self.n_ctrl,
                 T=self.T,
@@ -358,8 +365,12 @@ class MPC(Module):
                 back_eps=self.back_eps,
                 no_op_forward=no_op_forward,
             )
+            lqr_step.set(_lqr)
+
             e = Variable(torch.Tensor())
-            x, u = _lqr(x_init, C, c, F, f if f is not None else e)
+
+            x, u = LQRStep.apply(x_init, C, c, F, f if f is not None else e)
+            # lqr_step.clear()
 
             return x, u, _lqr
         else:
